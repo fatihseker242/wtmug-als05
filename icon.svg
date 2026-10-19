@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1e40af"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Arka plan -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Kamera gövdesi -->
+  <rect x="96" y="176" width="320" height="220" rx="40" fill="#ffffff" opacity="0.95"/>
+  <!-- Üst çıkıntı -->
+  <rect x="196" y="140" width="120" height="56" rx="20" fill="#ffffff" opacity="0.95"/>
+
+  <!-- Lens -->
+  <circle cx="256" cy="286" r="86" fill="#1e40af"/>
+  <circle cx="256" cy="286" r="64" fill="#93c5fd"/>
+  <circle cx="232" cy="262" r="16" fill="#ffffff" opacity="0.9"/>
+
+  <!-- Çeviri sembolü -->
+  <text x="140" y="390" font-family="Arial, sans-serif" font-size="52"
+        font-weight="700" fill="#1e40af">A</text>
+  <path d="M310 370 L360 370 L360 350 L386 382 L360 414 L360 394 L310 394 Z"
+        fill="#1e40af"/>
+</svg>

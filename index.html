@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kamera Tercümanı</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+
+  <!-- İkonlar (icons/ klasörüne koyun) -->
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Kamera Tercümanı">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f3f4f6;
+      padding: 16px;
+      max-width: 640px;
+      margin: 0 auto;
+      color: #111827;
+    }
+    h1 { font-size: 1.4rem; color: #1e40af; margin-bottom: 16px; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    label { font-weight: 600; display: block; margin-bottom: 6px; font-size: 0.95rem; }
+    select, button, input[type="file"] {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:active { background: #1d4ed8; }
+    button.secondary { background: #6b7280; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    video, canvas, #preview {
+      width: 100%;
+      border-radius: 8px;
+      margin-top: 8px;
+      background: #000;
+    }
+    #preview { display: none; max-height: 300px; object-fit: contain; background: #111; }
+    #result {
+      min-height: 80px;
+      background: #f9fafb;
+      padding: 12px;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.6;
+      font-size: 1rem;
+    }
+    .status {
+      font-size: 0.85rem;
+      color: #6b7280;
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    hr { border: none; border-top: 1px solid #e5e7eb; margin: 12px 0; }
+  </style>
+</head>
+<body>
+
+  <h1>📷 Kamera Tercümanı</h1>
+
+  <!-- Hedef Dil -->
+  <div class="card">
+    <label for="targetLang">Çeviri Hedef Dili</label>
+    <select id="targetLang">
+      <option value="tr" selected>Türkçe</option>
+      <option value="en">İngilizce</option>
+    </select>
+  </div>
+
+  <!-- Kamera -->
+  <div class="card">
+    <label>Kamera</label>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div class="row">
+      <button id="btnStartCam">Kamerayı Aç</button>
+      <button id="btnCapture" disabled>Yakala ve Çevir</button>
+    </div>
+  </div>
+
+  <!-- Galeri -->
+  <div class="card">
+    <label>Galeriden Görsel Yükle</label>
+    <input type="file" id="fileInput" accept="image/*">
+    <img id="preview" alt="Önizleme">
+  </div>
+
+  <!-- Sonuç -->
+  <div class="card">
+    <label>Sonuç</label>
+    <div id="result">Kamerayı açıp bir yazı yakalayın veya galeriden görsel seçin.</div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <!-- Tesseract.js -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script>
+    // ============================================================
+    // Global değişkenler
+    // ============================================================
+    const video        = document.getElementById('video');
+    const canvas       = document.getElementById('canvas');
+    const resultDiv    = document.getElementById('result');
+    const statusDiv    = document.getElementById('status');
+    const targetSelect = document.getElementById('targetLang');
+    const fileInput    = document.getElementById('fileInput');
+    const previewImg   = document.getElementById('preview');
+
+    let stream       = null;
+    let ocrWorker    = null;
+    let workerLoading = false;
+
+    // ============================================================
+    // PWA Service Worker
+    // ============================================================
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(err =>
+        console.log('SW kayıt hatası:', err)
+      );
+    }
+
+    // ============================================================
+    // Kamera başlatma
+    // ============================================================
+    document.getElementById('btnStartCam').addEventListener('click', async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        video.srcObject = stream;
+        document.getElementById('btnCapture').disabled = false;
+        document.getElementById('btnStartCam').disabled = true;
+      } catch (err) {
+        alert('Kamera erişimi başarısız: ' + err.message +
+              '\nHTTPS üzerinden eriştiğinizden emin olun.');
+      }
+    });
+
+    // ============================================================
+    // Kameradan yakalama
+    // ============================================================
+    document.getElementById('btnCapture').addEventListener('click', async () => {
+      if (!stream) return;
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      canvas.toBlob(blob => processImage(blob), 'image/jpeg', 0.9);
+    });
+
+    // ============================================================
+    // Galeriden yükleme
+    // ============================================================
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      previewImg.src = URL.createObjectURL(file);
+      previewImg.style.display = 'block';
+      await processImage(file);
+    });
+
+    // ============================================================
+    // OCR Worker (tek sefer oluşturulur, sonra yeniden kullanılır)
+    // ============================================================
+    async function getOCRWorker() {
+      if (ocrWorker) return ocrWorker;
+      if (workerLoading) {
+        while (workerLoading) await new Promise(r => setTimeout(r, 200));
+        return ocrWorker;
+      }
+      workerLoading = true;
+      statusDiv.textContent = 'OCR motoru yükleniyor (ilk seferde 15–30 sn sürebilir)...';
+
+      try {
+        // Kullanıcının istediği diller + Türkçe
+        ocrWorker = await Tesseract.createWorker(
+          'ara+chi_sim+rus+fra+deu+ita+tur',
+          1,
+          {
+            logger: m => {
+              if (m.status === 'recognizing text') {
+                statusDiv.textContent = `OCR: %${Math.round(m.progress * 100)}`;
+              }
+            }
+          }
+        );
+      } catch (e) {
+        workerLoading = false;
+        throw new Error('OCR motoru yüklenemedi: ' + e.message);
+      }
+      workerLoading = false;
+      return ocrWorker;
+    }
+
+    // ============================================================
+    // Görsel işleme akışı: OCR → Çeviri
+    // ============================================================
+    async function processImage(blobOrFile) {
+      resultDiv.textContent = 'İşleniyor...';
+      statusDiv.textContent = '';
+
+      try {
+        // 1) OCR
+        const worker = await getOCRWorker();
+        const ret    = await worker.recognize(blobOrFile);
+        const raw    = ret.data.text;
+        const text   = preprocessOCRText(raw);
+
+        if (!text) {
+          resultDiv.textContent =
+            'Görselde okunabilir metin bulunamadı. Daha net bir görsel deneyin.';
+          statusDiv.textContent = '';
+          return;
+        }
+
+        resultDiv.textContent = `Algılanan metin:\n${text}\n\nÇevriliyor...`;
+        statusDiv.textContent = '';
+
+        // 2) Kaynak dili tahmin et (MyMemory yedeği için)
+        const sourceLang = guessSourceLang(text);
+
+        // 3) Çeviri
+        const targetLang = targetSelect.value;
+        const translated = await translateText(text, sourceLang, targetLang);
+        const targetName = targetSelect.options[targetSelect.selectedIndex].text;
+
+        resultDiv.textContent =
+          `Algılanan Metin:\n${text}\n\n` +
+          `Çeviri (${targetName}):\n${translated}`;
+        statusDiv.textContent = 'Tamamlandı ✅';
+
+      } catch (err) {
+        console.error(err);
+        resultDiv.textContent = 'Hata: ' + err.message;
+        statusDiv.textContent = '';
+      }
+    }
+
+    // ============================================================
+    // OCR metnini temizleme
+    // ============================================================
+    function preprocessOCRText(raw) {
+      return raw
+        .replace(/\r/g, '')
+        .replace(/\n+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // ============================================================
+    // Basit kaynak dil tahmini (MyMemory yedeği için)
+    // ============================================================
+    function guessSourceLang(text) {
+      // Arapça karakter aralığı
+      if (/[\u0600-\u06FF]/.test(text)) return 'ar';
+      // Çince (CJK) karakter aralığı
+      if (/[\u4E00-\u9FFF]/.test(text)) return 'zh-CN';
+      // Kiril alfabesi (Rusça)
+      if (/[\u0400-\u04FF]/.test(text)) return 'ru';
+      // Varsayılan: İngilizce (MyMemory "autodetect" desteklemediği için)
+      return 'en';
+    }
+
+    // ============================================================
+    // Çeviri: Lingva (birincil) + MyMemory (yedek)
+    // ============================================================
+
+    // Lingva halka açık örnekleri (2026 itibarıyla bilinenler)
+    const LINGVA_INSTANCES = [
+      'https://lingva.ml',
+      'https://translate.igna.wtf',
+      'https://translate.plausibility.cloud',
+      'https://lingva.lunar.icu',
+      'https://translate.projectsegfau.lt',
+      'https://lingva.garudalinux.org',
+      'https://translate.dr460nf1r3.org',
+      'https://translate.jae.fi'
+    ];
+
+    // MyMemory dil kodu eşlemesi
+    function toMyMemoryCode(lang) {
+      const map = {
+        'tr': 'tr',
+        'en': 'en',
+        'ar': 'ar',
+        'zh-CN': 'zh-CN',
+        'ru': 'ru',
+        'fr': 'fr',
+        'de': 'de',
+        'it': 'it'
+      };
+      return map[lang] || lang;
+    }
+
+    async function translateText(text, sourceLang, targetLang) {
+      // Lingva ile dene
+      const lingvaResult = await tryLingva(text, targetLang);
+      if (lingvaResult) return lingvaResult;
+
+      // Lingva başarısız → MyMemory'ye düş
+      console.warn('Lingva başarısız, MyMemory deneniyor...');
+      return await tryMyMemory(text, sourceLang, targetLang);
+    }
+
+    // ------------------------------------------------------------
+    // Lingva: Birden fazla örneği sırayla dene
+    // ------------------------------------------------------------
+    async function tryLingva(text, targetLang) {
+      // Lingva genellikle uzun metinleri işleyebilir; yine de güvenli böl.
+      const maxLen = 1000;
+      const parts  = splitText(text, maxLen);
+      const out    = [];
+
+      for (const part of parts) {
+        let success = false;
+
+        for (const base of LINGVA_INSTANCES) {
+          const url = `${base}/api/v1/auto/${targetLang}/${encodeURIComponent(part)}`;
+          try {
+            const resp = await fetch(url, { method: 'GET' });
+            if (!resp.ok) continue;
+
+            const data = await resp.json();
+            if (data.translation) {
+              out.push(data.translation);
+              success = true;
+              break; // bu parça için başarılı
+            }
+          } catch (e) {
+            console.warn(`Lingva ${base} başarısız:`, e.message);
+          }
+        }
+
+        if (!success) return null; // Lingva tamamen başarısız
+
+        await new Promise(r => setTimeout(r, 250)); // nazik bekleme
+      }
+
+      return out.join(' ');
+    }
+
+    // ------------------------------------------------------------
+    // MyMemory: Yedek çeviri
+    // ------------------------------------------------------------
+    async function tryMyMemory(text, sourceLang, targetLang) {
+      const src = toMyMemoryCode(sourceLang);
+      const tgt = toMyMemoryCode(targetLang);
+
+      // MyMemory tek istekte 500 bayt kabul eder
+      const parts = splitTextByBytes(text, 500);
+      const out   = [];
+
+      for (const part of parts) {
+        const params = new URLSearchParams({
+          q: part,
+          langpair: `${src}|${tgt}`
+        });
+        const url = `https://api.mymemory.translated.net/get?${params}`;
+
+        try {
+          const resp = await fetch(url);
+          const data = await resp.json();
+
+          if (data.responseStatus === 200 && data.responseData?.translatedText) {
+            out.push(data.responseData.translatedText);
+          } else {
+            out.push(`[MyMemory çeviri hatası: ${data.responseDetails || 'bilinmeyen'}]`);
+          }
+        } catch (e) {
+          out.push('[MyMemory ağ hatası]');
+          console.error('MyMemory fetch hatası:', e);
+        }
+
+        await new Promise(r => setTimeout(r, 250));
+      }
+
+      return out.join(' ');
+    }
+
+    // ------------------------------------------------------------
+    // Metni karakter sayısına göre böl
+    // ------------------------------------------------------------
+    function splitText(text, maxLen) {
+      const parts = [];
+      let cur = '';
+      for (const ch of text) {
+        if ((cur + ch).length > maxLen) {
+          parts.push(cur);
+          cur = ch;
+        } else {
+          cur += ch;
+        }
+      }
+      if (cur) parts.push(cur);
+      return parts;
+    }
+
+    // ------------------------------------------------------------
+    // Metni bayt sayısına göre böl (MyMemory için)
+    // ------------------------------------------------------------
+    function splitTextByBytes(text, maxBytes) {
+      const encoder = new TextEncoder();
+      const parts   = [];
+      let cur = '';
+      for (const ch of text) {
+        if (encoder.encode(cur + ch).length > maxBytes) {
+          if (cur) parts.push(cur);
+          cur = ch;
+        } else {
+          cur += ch;
+        }
+      }
+      if (cur) parts.push(cur);
+      return parts;
+    }
+  </script>
+</body>
+</html>
